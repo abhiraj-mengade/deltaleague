@@ -51,6 +51,30 @@ completed, but was unnecessary and never executed. The final reproduction code
 retains the successful-full-response requirement; the unused fallback code was
 removed. The proposal remains recorded in `continuation-plan.json` for traceability.
 
+## Protocol correction before further inference
+
+The user correctly challenged the 1,536-token diagnostic. It cannot establish
+whether this candidate improves the pinned official evaluation. Increasing only
+the token cap would still leave prompt and scoring mismatches: the manifest names
+native GSM8K with five demonstrations and exact-match metrics, whereas this run
+used zero-shot boxed-answer prompts and the CLI math scorer with an added
+reasoning-close gate. The earlier results remain valid only for that diagnostic.
+
+Teacher coverage was one queried problem, successfully completed with a longer
+allowance, not one correct out of eight. Seven teacher outcomes are unknown.
+The next comparison must evaluate original, frozen candidate, and teacher on the
+same examples with the same output allowance and verified task setup.
+
+`protocol-parity-audit.json` records the pinned settings, mismatches and remaining
+requirements. The public CLI currently rejects this manifest format. Upstream
+lm-eval v0.4.13 supplies the native task, but its greedy defaults differ from the
+pinned evaluation's sampling configuration; the worker's actual overrides,
+few-shot seeds, formatting, stopping and filtering must be verified rather than
+inferred. Anonymous access to the pinned worker registry returned 401. No private
+worker data or tests were accessed. No new inference has been launched; the old
+local-compute budget has expired. A new bounded budget must be agreed once this
+public evaluation recipe is available.
+
 ## Hypothesis and access
 
 Illia Polosukhin proposed using a larger Qwen model's behavior to improve the
