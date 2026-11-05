@@ -103,7 +103,7 @@ def render(tok, prompt):
                                   add_generation_prompt=True, enable_thinking=True)
 
 
-def generate(model, tok, row, deadline):
+def generate(model, tok, row, deadline, max_new_tokens=1536):
     from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList, set_seed
     from delta_cli.scoring import score_answer
     inputs = tok(render(tok, row['prompt']), return_tensors='pt', add_special_tokens=False)
@@ -124,7 +124,7 @@ def generate(model, tok, row, deadline):
     set_seed(1000)
     start = time.monotonic()
     with torch.inference_mode():
-        output = model.generate(**inputs, use_cache=True, max_new_tokens=1536,
+        output = model.generate(**inputs, use_cache=True, max_new_tokens=max_new_tokens,
             do_sample=True, temperature=1., top_p=.95, top_k=20,
             logits_processor=LogitsProcessorList([Presence()]),
             stopping_criteria=StoppingCriteriaList([Watch()]))[0, n:]
@@ -136,7 +136,8 @@ def generate(model, tok, row, deadline):
     closed = '</think>' in text
     score = score_answer(row, text) if closed else 0.
     result = {k:row[k] for k in ['id','dataset_index','split']}
-    result.update(text=text, token_ids=ids, tokens=len(ids), truncated=len(ids)==1536,
+    result.update(text=text, token_ids=ids, tokens=len(ids), truncated=len(ids)==max_new_tokens,
+                  max_new_tokens=max_new_tokens,
                   reasoning_closed=closed, score=score, seconds=time.monotonic()-start,
                   **repetition(ids))
     print(json.dumps({k:v for k,v in result.items() if k not in ['text','token_ids','loop_positions']}), flush=True)
@@ -151,6 +152,10 @@ def capture(model, tok, row, trace, loop):
     """Replay both texts inside the student; never subtract cross-model activations."""
     prompt_ids = tok.encode(render(tok, row['prompt']), add_special_tokens=False)
     text = trace['text'] if loop else trace['text'].split('</think>')[0]
+    if not loop:
+        # Qwen3 emits this marker, whereas Qwen3.5's generation prompt already
+        # includes it. Replay reasoning content without a nested opening tag.
+        text=text.removeprefix('<think>').lstrip('\n')
     continuation = tok.encode(text, add_special_tokens=False)
     if loop:
         positions = repetition(continuation)['loop_positions']
@@ -177,6 +182,7 @@ def edit(w, rows):
     teacher_traces = read_traces(w/'local/teacher.generations.jsonl')
     pairs = [r for r in teacher_traces if r['score']==1 and not r['loop_detected']
              and base_traces[r['id']]['loop_detected'] and base_traces[r['id']]['score']==0]
+    contrast_kind='completed_correct_teacher_answer'
     if not pairs:
         dump(w/'local/outcome.json', {'status':'no_supported_edit',
              'reason':'No repetitive incorrect student trace paired with a correct nonrepetitive teacher trace.'})
@@ -217,7 +223,8 @@ def edit(w, rows):
                         'relative_delta_norm':float(diff.norm()/original.norm())})
     assert sum(c['changed_elements'] for c in changes)>0
     save_file(weights,w/'edited.safetensors')
-    dump(w/'local/edit.json', {'pairs':[p['id'] for p in pairs], 'changes':changes,
+    dump(w/'local/edit.json', {'pairs':[p['id'] for p in pairs], 'contrast_kind':contrast_kind,
+        'teacher_full_response_scores_unchanged':True, 'changes':changes,
         'edited_sha256':sha(w/'edited.safetensors'),'gradient_training':False,'candidate_count':1})
 
 
@@ -225,9 +232,17 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--workspace',type=Path,required=True)
     p.add_argument('--stage',choices=['baseline','teacher','edit','candidate'],required=True)
+    p.add_argument('--max-new-tokens',type=int,default=1536)
     args=p.parse_args(); w=args.workspace.resolve()
+    assert args.max_new_tokens in [1536,4096]
+    assert args.max_new_tokens==1536 or args.stage=='teacher'
     plan=json.loads((w/'plan.json').read_text())
     assert plan['proposed_budget']['approved']
+    identity=json.loads((w/'delta-workspace.json').read_text())
+    assert identity['parent_version_id']==plan['parent_version_id']
+    assert identity['config_id']==plan['evaluation_id']
+    manifest=json.loads((w/'validation.json').read_text())
+    assert manifest['dataset_revisions']['openai/gsm8k']==plan['data']['dataset_revision']
     remaining=int(plan['deadline_unix']-time.time())
     assert remaining>0, 'Approved wall-clock budget exhausted'
     signal.alarm(remaining)
@@ -242,6 +257,10 @@ def main():
         edit(w,rows)
     else:
         selected=rows
+        if args.stage=='candidate':
+            # Preserve all eight comparisons, but prioritize the reserved set
+            # if the shared wall-clock deadline interrupts the run.
+            selected=sorted(rows,key=lambda r:r['split']!='holdout')
         if args.stage=='teacher':
             baseline=read_traces(w/'local/baseline.generations.jsonl')
             ids=[r['id'] for r in baseline if r['split']=='development' and r['loop_detected'] and r['score']==0][:2]
@@ -257,7 +276,7 @@ def main():
             model,tok=load_model(w,teacher=args.stage=='teacher',edited=args.stage=='candidate')
             with path.open('a') as stream:
                 for row in remaining_rows:
-                    result=generate(model,tok,row,plan['deadline_unix'])
+                    result=generate(model,tok,row,plan['deadline_unix'],args.max_new_tokens)
                     stream.write(json.dumps(result)+'\n');stream.flush()
     dump(w/f'local/{args.stage}-runtime.json',{'seconds':time.monotonic()-start,
          'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,

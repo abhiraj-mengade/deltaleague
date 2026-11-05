@@ -1,9 +1,55 @@
 # Teacher-guided direct removal of a repetitive-reasoning direction
 
-**Outcome: stopped at diagnosis; no supported weight edit.** The single eligible
-teacher query also exhausted the fixed reasoning budget without a final answer.
-The predeclared stop condition was followed instead of changing the protocol or
-manufacturing a successful contrast. No candidate, patch or submission exists.
+**Completed: one direct edit built and validated; no local correctness gain.**
+The initial short-budget diagnostic stopped without an edit. In the explicitly
+authorized continuation, the teacher completed correctly at 2,882 tokens,
+providing the intended contrast for a single gradient-free edit.
+
+The initial stopping outcome is retained as the first protocol's result. After the
+user requested continuation, a second diagnostic pass was authorized within the
+remaining original two-hour window. It extends only the teacher's output cap to
+4,096 tokens. The saved student baseline is reused; the proposed single edit,
+student 1,536-token cap, prompt, seed, and other generation settings remain fixed.
+`continuation-plan.json` records the explicit amendment. The comparison examples
+have already been observed in the first run, so they must not be described as a
+new untouched holdout. Candidate evaluation runs the four reserved
+examples first and then the four development examples under the same deadline.
+
+For this continuation, use a separate workspace with copies of the original
+configuration, selected examples, baseline traces and inspected diagnosis; reuse
+the original parent and teacher directories. Preserve the original absolute
+deadline in its plan. The teacher command is:
+
+```bash
+python research/ilblackdragon-teacher-loop-direction/run.py --workspace CONTINUATION --stage teacher --max-new-tokens 4096
+```
+
+The original results and trace summaries are retained rather than overwritten.
+
+The extended teacher's first 1,536 token IDs match the original capped trace
+exactly. It then closes reasoning and answers 12 correctly before its new
+4,096-token ceiling. `continuation-provenance.json` verifies prefix identity and
+bitwise reuse of the student baseline. Its tail repetition coverage is 17.97%,
+below the fixed 20% threshold. The full successful teacher response supplied the
+contrast; the documented fallback below was not used.
+
+The teacher's larger output allowance is for obtaining a diagnostic contrast;
+it is not a matched-budget comparison of model sizes. The original and edited
+student use identical 1,536-token budgets and sampling settings. A student given
+more tokens might also finish; that question is not answered by this run.
+
+The direct edit changes 61,283 BF16 entries in layer 15 and 61,566 in layer 19
+(122,849 total). Realized relative norm changes are 0.50054% and 0.50042% after
+rounding. Construction took 9.04 seconds with no optimizer or gradient training.
+`direct-edit.json` contains exact column selections and scaling factors.
+The 1,228,810-byte sparse patch passed CLI validation, and its reconstruction
+matches the full edited checkpoint bit for bit. Original model hashes pass.
+`continuation-audit.json` records the checks and artifact hashes.
+
+A segment-based fallback was proposed and timestamped before the extended query
+completed, but was unnecessary and never executed. The final reproduction code
+retains the successful-full-response requirement; the unused fallback code was
+removed. The proposal remains recorded in `continuation-plan.json` for traceability.
 
 ## Hypothesis and access
 
@@ -84,6 +130,11 @@ scale = min(1, 0.005 * ||W||_F / ||delta_selected||_F)
 W_selected_new = BF16(W_selected_float32 + scale * delta_selected)
 ```
 
+Before replay, remove the teacher's generated opening `<think>` marker because
+the student's generation template already includes it. This formatting fix was
+made before any edit construction during the continuation; neither model's
+generation or the earlier diagnostic results changed.
+
 Only the two down-projection matrices may change. There is one fixed candidate,
 no gradient updates, no optimizer, no strength search, and no retuning from
 holdout results. BF16 rounding can slightly change the realized norm and rank.
@@ -104,13 +155,23 @@ Initialize a new workspace with the exact parent and ensure its evaluation/hash
 match the pinned identifiers above. Reuse the pinned teacher snapshot, or download
 it separately under an appropriate download/storage budget. Set `plan.json`'s
 `started_at_unix` and `deadline_unix` to the authorized start and start plus 7200.
+Use `continuation-plan.json` as the plan template to reproduce the actual edit;
+the old timestamps are provenance, not a reusable runtime window. Install the
+pinned CPU PyTorch wheel from `https://download.pytorch.org/whl/cpu` before the
+dependency lock file. Initialize with:
+
+```bash
+delta competition init qwen35-08b-v1 --parent 0ea62f40-7cd8-4d98-9ebb-484192fa05eb --output WORKSPACE
+```
 
 ```bash
 export OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 OPENBLAS_NUM_THREADS=1
 python research/ilblackdragon-teacher-loop-direction/run.py --workspace WORKSPACE --stage baseline
-python research/ilblackdragon-teacher-loop-direction/run.py --workspace WORKSPACE --stage teacher
+python research/ilblackdragon-teacher-loop-direction/run.py --workspace WORKSPACE --stage teacher --max-new-tokens 4096
 # Inspect flagged development traces. If there are valid pairs, write
 # local/diagnosis.json with confirmed_loop_ids before constructing an edit.
+# For the identical seeded reproduction, continuation-diagnosis.json records
+# the inspected example. Omitting --max-new-tokens reproduces the initial stop.
 python research/ilblackdragon-teacher-loop-direction/run.py --workspace WORKSPACE --stage edit
 # Only if an edit was supported and edited.safetensors exists:
 python research/ilblackdragon-teacher-loop-direction/run.py --workspace WORKSPACE --stage candidate
@@ -124,9 +185,9 @@ or token arrays. `audit.py --workspace WORKSPACE` checks parent file hashes; if
 a candidate exists it also checks names/shapes/dtypes, finiteness, target scope,
 and bitwise equality of patch reconstruction with `edited.safetensors`.
 
-## Interpretation and submission
+## Initial 1,536-token diagnostic, preserved
 
-The completed run produced:
+The first run produced:
 
 | Local diagnostic group | Problems | Correct final answers | Hit 1,536-token cap | Strict repetition flags |
 | --- | ---: | ---: | ---: | ---: |
@@ -134,7 +195,7 @@ The completed run produced:
 | Original holdout | 4 | 0 | 4 | 0 |
 | Teacher on eligible development problem | 1 | 0 | 1 | 0 |
 
-There are no candidate scores; they are null, not zero. The exact public question
+There were no candidate scores at that stage; they are null, not zero. The exact public question
 IDs, document hashes, settings, aggregates and per-example metric summaries are
 in `results.json`. Raw traces are kept outside Git.
 
@@ -146,20 +207,80 @@ not guarantee progress. Development problems 438 and 170 also showed repeated
 reconsideration with varied phrasing but did not qualify under the fixed detector.
 These observations are recorded in `diagnosis.json`; the threshold was not tuned.
 
-The larger teacher was not a successful contrast for this particular failure
-under these settings. The direct-edit routine in `run.py` is prepared but was
-**not exercised**, and its efficacy remains untested. This is not evidence that
-direct weight editing cannot work. It also does not establish that the models
-would fail with the official longer token allowance or a different prompt.
+The larger teacher was not a successful contrast under that short allowance.
+The direct-edit routine was not exercised in the initial diagnostic. The
+authorized continuation above subsequently obtained a successful full response
+and exercised the edit. The initial stop does not establish that either model
+would fail under a longer output allowance.
 
 Baseline generation took 1,708.41 seconds; teacher generation took 501.33 seconds.
 Including loading, the baseline and teacher stages took 1,709.83 and 502.31
 seconds. End-to-end wall time including preparation and the requested source
 review was about 41 minutes, within the two-hour ceiling. Peak measured RSS was
 14.95 GiB for the BF16 teacher. All seven original downloaded model files passed
-their size/hash checks. No weight changed, no patch was built or submitted, and
-no evaluation quota was consumed. The remaining budget was not used to start a
-second candidate search or change the predeclared stopping rule.
+their size/hash checks. At the initial stopping point no weight had changed and
+no patch or submission existed. The user later requested continuation within the
+remaining original budget; that protocol amendment and its candidate are recorded
+separately above. No evaluation quota has been consumed.
+
+## Completed direct-edit comparison
+
+All eight matched comparisons completed under the original two-hour deadline.
+These are local diagnostic results at 1,536 tokens, not official League scores.
+The reserved set had already been observed during the initial diagnostic; no
+candidate parameters were selected or changed using its results.
+
+| Group | Correct original → edited | Completed original → edited | Mean exact tail repetition original → edited |
+| --- | ---: | ---: | ---: |
+| Development (4) | 0/4 → 0/4 | 0/4 → 0/4 | 11.43% → 4.59% |
+| Reserved comparison (4) | 0/4 → 0/4 | 0/4 → 0/4 | 6.74% → 10.55% |
+
+Every student trace reached its cap. There were zero paired accuracy wins or
+losses, and four ties in each group. The exact paired sign test is uninformative
+(p=1 with zero discordant pairs); this is not evidence of equivalence. Strict
+repetition flags fell from one to zero on development and stayed zero on the
+reserved set. Mean reserved-set repetition increased. There is no demonstrated
+completion, accuracy, or general repetition improvement.
+
+`continuation-results.json` includes complete per-example metrics, token-prefix
+divergence, paired comparisons, artifact metadata and runtime summaries. The
+baseline was reused bit for bit, not rerun. The extended teacher stage took
+987.99 seconds, construction 9.04 seconds, and candidate generation 1,406.36
+seconds. Total model-stage time including the initial baseline and teacher was
+about 77 minutes; elapsed wall time including preparation and the gap before
+continuation was 112.2 minutes. The largest measured inference RSS was
+15.31 GiB; the workspace occupies about 1.7 GiB without following reused model
+symlinks. The approved limits were 120 minutes, 64 GiB RAM, and 5 GiB extra disk.
+
+The candidate checkpoint SHA-256 is
+`50baa498548c1f21f3751545084f38184770156e7318570c126bbea340cf1970`.
+The patch SHA-256 is
+`a3f97146e9082b1bc82f557b5c9fd13f2e89b9e68afa71dfec37196a6ede9fb0`.
+Weights and raw traces are deliberately excluded from the PR. No submission has
+been made and no official evaluation is pending. Quota checked after the local
+comparison remains 0/5 used.
+
+## What the intervention teaches us
+
+The layer indices refer only to the small model. Their choice comes from prior
+work, not a discovered correspondence to the larger model. Different sizes and
+architectures need not share neuron coordinates or layer roles. Teacher text
+provides a common interface: replaying it in the student yields comparable
+student-space activations without pretending the two weight spaces align.
+
+Direct edits can alter sampled behavior with a small matrix perturbation, but
+that alone does not establish an improvement or a uniquely identified function
+for a layer. This run jointly changes two layers and has no layer ablation, so it
+cannot assign the effect to either layer separately. The direction can mix
+repetition, topic, style and token-position information.
+
+On development problem 421, exact tail repetition falls from 29.30% to zero,
+but inspection of the edited trace still shows repeated reconsideration of the
+same arithmetic and interpretation. It does not close its reasoning within the
+cap. Exact token repetition is therefore an incomplete proxy for semantic loops;
+lower repetition should not be reported as better reasoning or task accuracy.
+
+## Interpretation and submission
 
 Four public holdout examples cannot establish general capability improvement.
 The short token cap can prevent answers that would complete under the official
