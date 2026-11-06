@@ -1,6 +1,6 @@
 # Training-data teacher-guided direct weight edit
 
-Status: approved local experiment running; no improvement claim or submission.
+Status: interrupted unexpectedly during the student training-data baseline; incomplete results, no candidate or submission.
 
 ## Hypothesis
 
@@ -111,8 +111,28 @@ launch. Source hashes and selection were frozen before inference.
 
 ## Findings and submission
 
-Pending. No teacher accuracy, candidate advantage or held-out score is available
-yet. Any partial results must state their completed denominators and compare
-matched example IDs. No official validation/private scores or submission exist.
-Submission requires a separate explicit quota approval after this research record
-and the built patch are reviewable.
+The process stopped unexpectedly with last logged progress at 2026-11-06 01:57:57
+UTC. On inspection at 23:43 UTC, neither the pipeline nor its inference child was
+alive and the execution session no longer existed. No final exception or shutdown
+record explains the termination. The old running marker was stale; it has been
+corrected. This was not a verified normal timeout. The approved deadline was
+12:11 UTC and has now passed. No restart or new budget was assumed.
+
+Six of 16 student training-data examples completed: one correct final answer
+(5,266 generated tokens), five capped at 8,192 tokens without closing reasoning.
+The seventh trace stopped during generation, with 5,888 tokens last logged; it
+is excluded from scored results. The completed subset's 1/6 accuracy is partial
+coverage, not an estimate from a completed experiment. These data show that long
+unfinished reasoning persisted on five examples at 8K; they do not establish
+teacher benefit or a generalization result.
+
+The teacher was never run: 0/16 queried, accuracy unknown. No edit was constructed,
+no held-out examples evaluated, no patch built and no submission made. No official
+validation or private score exists. `results.json` records completed denominators;
+`interruption.json` records the observed interruption without inventing a cause.
+The initial parent artifact audit passed. Original weights remain untouched by
+this experiment.
+
+A continuation requires a newly agreed local budget and a durable execution
+mechanism; the expired job must not be represented as still running. Submission
+would still require separate explicit quota approval after a concrete candidate.
